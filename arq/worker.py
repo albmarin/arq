@@ -145,6 +145,7 @@ class Worker:
     :param health_check_interval: how often to set the health check key
     :param health_check_key: redis key under which health check is set
     :param ctx: dictionary to hold extra user defined state
+    :param pass_ctx: whether ctx should be passed to queued functions
     :param retry_jobs: whether to retry jobs on Retry or CancelledError or not
     :param max_burst_jobs: the maximum number of jobs to process in burst mode (disabled with negative values)
     :param job_serializer: a function that serializes Python objects to bytes, defaults to pickle.dumps
@@ -172,6 +173,7 @@ class Worker:
         health_check_interval: 'SecondsTimedelta' = 3600,
         health_check_key: Optional[str] = None,
         ctx: Optional[Dict[Any, Any]] = None,
+        pass_ctx: bool = True,
         retry_jobs: bool = True,
         max_burst_jobs: int = -1,
         job_serializer: Optional[Serializer] = None,
@@ -214,6 +216,7 @@ class Worker:
         self.main_task: Optional[asyncio.Task[None]] = None
         self.loop = asyncio.get_event_loop()
         self.ctx = ctx or {}
+        self.pass_ctx = pass_ctx
         max_timeout = max(f.timeout_s or self.job_timeout_s for f in self.functions.values())
         self.in_progress_timeout_s = (max_timeout or 0) + 10
         self.jobs_complete = 0
@@ -447,6 +450,10 @@ class Worker:
             'score': score,
         }
         ctx = {**self.ctx, **job_ctx}
+
+        if self.pass_ctx:
+            args = (ctx, *args)
+
         start_ms = timestamp_ms()
         success = False
         try:
@@ -458,7 +465,7 @@ class Worker:
             # run repr(result) and extra inside try/except as they can raise exceptions
             try:
                 async with async_timeout.timeout(timeout_s):
-                    result = await function.coroutine(ctx, *args, **kwargs)
+                    result = await function.coroutine(*args, **kwargs)
             except Exception as e:
                 exc_extra = getattr(e, 'extra', None)
                 if callable(exc_extra):
